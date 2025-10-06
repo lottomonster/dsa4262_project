@@ -1,0 +1,42 @@
+Baseline AUC: 0.9102 ± 0.0057
+Baseline features: 28
+=== FEATURE SELECTION ===
+Selecting top 50 features using mutual_info...
+Top 10 features by mutual_info:
+                    feature    score
+                 Unnamed: 0 0.054544
+                     pos5_C 0.026013
+          central_dominance 0.024364
+central_flanking_mean_ratio 0.024353
+                     pos3_A 0.020832
+                     pos2_G 0.019695
+                     pos6_T 0.017462
+                    PreMean 0.015244
+     central_post_mean_diff 0.014776
+                     pos2_A 0.014644
+Selecting top 50 features using f_score...
+Top 10 features by f_score:
+            feature       score
+             pos2_G 3087.674732
+             pos6_T 2651.065791
+            PreMean 1259.865739
+             pos3_A  993.423112
+             pos2_A  862.183095
+mean_gradient_slope  816.214809
+             pos6_A  692.093085
+pre_post_mean_ratio  665.962128
+             pos7_A  631.674947
+             pos6_C  595.225225
+Selecting top 50 features using random_forest...
+Top 10 features by random_forest:
+                    feature    score
+                     InMean 0.056169
+                       InSD 0.041162
+central_flanking_mean_ratio 0.040109
+     central_post_mean_diff 0.039892
+          central_dominance 0.039077
+                   PostMean 0.037724
+                    PreMean 0.036979
+      central_pre_mean_diff 0.036355
+         in_signal_to_noise 0.033217
+        time_sd_interaction 0.032019
