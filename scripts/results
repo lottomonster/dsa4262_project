@@ -1,3 +1,18 @@
+NEXT STEPS:
+1. Load your data: df = pd.read_csv('../data/output_w_label.csv')
+2. Run workflow: results = run_advanced_feature_engineering_workflow(df=df)
+3. Use results['best_features'] for your final model
+=== ADVANCED FEATURE ENGINEERING WORKFLOW ===
+Loaded data: (121838, 32)
+Original features: 32
+Class distribution: {0.0: 116363, 1.0: 5475}
+Creating Phase 1 features: Position-based interactions...
+Creating Phase 2 features: Signal processing...
+Creating Phase 3 features: Motif-aware features...
+Creating Phase 4 features: Statistical interactions...
+Feature engineering complete. Added 23 new features.
+Total features: 55
+=== BASELINE PERFORMANCE ===
 Baseline AUC: 0.9102 ± 0.0057
 Baseline features: 28
 === FEATURE SELECTION ===
@@ -40,3 +55,52 @@ central_flanking_mean_ratio 0.040109
       central_pre_mean_diff 0.036355
          in_signal_to_noise 0.033217
         time_sd_interaction 0.032019
+=== PERFORMANCE EVALUATION ===
+mutual_info (top 20): AUC = 0.8945 ± 0.0063
+mutual_info (top 30): AUC = 0.9036 ± 0.0054
+mutual_info (top 40): AUC = 0.9010 ± 0.0035
+mutual_info (top 50): AUC = 0.8994 ± 0.0045
+f_score (top 20): AUC = 0.8903 ± 0.0046
+f_score (top 30): AUC = 0.8994 ± 0.0039
+f_score (top 40): AUC = 0.8993 ± 0.0044
+f_score (top 50): AUC = 0.8988 ± 0.0049
+random_forest (top 20): AUC = 0.8865 ± 0.0060
+random_forest (top 30): AUC = 0.8854 ± 0.0058
+random_forest (top 40): AUC = 0.8941 ± 0.0041
+random_forest (top 50): AUC = 0.8985 ± 0.0055
+=== BEST CONFIGURATION ===
+Best method: mutual_info
+Best feature count: 30
+Best AUC: 0.9036
+Improvement over baseline: -0.0066
+FINAL SELECTED FEATURES (30):
+ 1. Unnamed: 0
+ 2. pos5_C
+ 3. central_dominance
+ 4. central_flanking_mean_ratio
+ 5. pos3_A
+ 6. pos2_G
+ 7. pos6_T
+ 8. PreMean
+ 9. central_post_mean_diff
+10. pos2_A
+11. pos6_A
+12. central_pre_mean_diff
+13. mean_gradient_slope
+14. InSD
+15. pos6_C
+16. InMean
+17. pos7_A
+18. pos1_A
+19. pre_post_mean_ratio
+20. central_pre_sd_diff
+21. pos7_T
+22. pos7_G
+23. central_post_sd_diff
+24. time_sd_interaction
+25. pos1_G
+26. central_signal_strength
+27. pos7_C
+28. PreSD
+29. pos1_T
+30. PostMean
