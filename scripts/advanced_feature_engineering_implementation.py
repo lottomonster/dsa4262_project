@@ -216,7 +216,7 @@ def run_advanced_feature_engineering_workflow(df_path=None, df=None):
     print("=== PERFORMANCE EVALUATION ===")
 
     # Test different numbers of top features
-    feature_counts = [20, 30, 40, 50]
+    feature_counts = [20, 30]
     results = {}
 
     for method in methods:
