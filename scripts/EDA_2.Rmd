@@ -1,0 +1,232 @@
+---
+title: "EDA_2"
+output: html_document
+date: "2025-10-19"
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(moments)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r}
+df <- read_csv('output_w_label.csv.gz', show_col_types = FALSE) %>% 
+  select(-'...1')
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r}
+col <- c('PreTime', 'PreSD', 'PreMean', 'InTime', 'InSD', 'InMean',
+         'PostTime', 'PostSD', 'PostTime')
+
+df_site <- df %>% 
+  group_by(ID, POS, label, SEQ) %>%
+  summarise(
+    # Skewness and Kurtosis for the 3 mean columns
+    PreMean_skew = skewness(PreMean, na.rm = TRUE),
+    PreMean_kurt = kurtosis(PreMean, na.rm = TRUE),
+    
+    InMean_skew = skewness(InMean, na.rm = TRUE),
+    InMean_kurt = kurtosis(InMean, na.rm = TRUE),
+    
+    PostMean_skew = skewness(PostMean, na.rm = TRUE),
+    PostMean_kurt = kurtosis(PostMean, na.rm = TRUE),
+    
+    # Mean of other numeric columns
+    across(col, ~ mean(.x, na.rm = TRUE), .names = "{.col}_mean")
+  ) %>% 
+  ungroup() %>%
+  mutate(across(5:last_col(), ~ (.x - mean(.x, na.rm = TRUE)) / sd(.x, na.rm = TRUE)))
+  
+```
+
+```{r}
+X <- df_site[, 5:ncol(df_site)]
+
+# 2️⃣ Run PCA (no scaling)
+pca <- prcomp(X, center = FALSE, scale. = FALSE)
+
+# 3️⃣ Extract the first two principal components
+pca_df <- as.data.frame(pca$x[, 1:2])
+colnames(pca_df) <- c("PC1", "PC2")
+
+# 4️⃣ Add the label column
+pca_df$label <- df_site$label
+
+# 5️⃣ Plot PCA results
+ggplot(pca_df, aes(x = PC1, y = PC2, color = label)) +
+  geom_point(alpha = 0.2, size = 0.4) +
+  theme_minimal() +
+  labs(title = "PCA Projection (2 Components)",
+       x = "Principal Component 1",
+       y = "Principal Component 2")
+
+ggplot(pca_df, aes(x = PC1, y = PC2,color = label)) +
+  geom_point(alpha = 0.2, size = 0.4) +
+  facet_wrap(~ label) +       # create one panel per label
+  theme_bw() +
+  labs(title = "PCA Projection Faceted by Label",
+       x = "Principal Component 1",
+       y = "Principal Component 2")
+
+
+```
+
+```{r}
+set.seed(123)  # for reproducibility
+kmeans_res <- kmeans(pca_df[, c("PC1", "PC2")], centers = 5, nstart = 25, iter.max = 1000)
+
+# 3️⃣ Add cluster assignments to your PCA dataframe
+pca_df$cluster <- as.factor(kmeans_res$cluster)
+
+# 4️⃣ Plot clusters on PCA space
+
+ggplot(pca_df, aes(x = PC1, y = PC2, color = cluster)) +
+  geom_point(alpha = 0.5, size = 0.2) +
+  theme_minimal() +
+  labs(title = "K-Means Clusters on PCA (k = 5)",
+       x = "Principal Component 1",
+       y = "Principal Component 2")  +
+  guides(color = guide_legend(override.aes = list(size = 3)))  # larger legend points
+
+```
+```{r}
+df_site$cluster <- pca_df$cluster
+
+prop <- df_site %>% 
+  summarize(.by=c(cluster),
+            prop = sum(label)/n())
+
+seq <- df_site %>% 
+  summarize(.by=c(cluster, SEQ),
+            count=n()) %>% 
+  group_by(cluster) %>% 
+  mutate(total=sum(count),
+         prop=count/total) %>% 
+  ungroup() %>% 
+  arrange(cluster, prop)
+```
+
+
+```{r}
+library(ggseqlogo)
+
+clust = 2
+
+ggseqlogo(seq %>% filter(cluster==clust) %>% pull(SEQ), method = "prob") +
+  theme_minimal() +
+  ggtitle("7-mer Sequence Logo")
+
+
+```
+
+
+```{r}
+# Get loadings for first 2 PCs
+loadings_2pc <- pca$rotation[, 1:10]
+
+# Convert to a data frame for plotting
+library(tibble)
+
+
+loadings_df <- as.data.frame(loadings_2pc) %>%
+  rownames_to_column(var = "variable") %>%
+  pivot_longer(cols = c(PC1, PC2, PC3, PC4, PC5, PC6, PC7, PC8, PC9, PC10), names_to = "PC", values_to = "loading")
+
+
+loadings_df$PC <- factor(loadings_df$PC, 
+                         levels = paste0("PC", 1:10))
+
+ggplot(loadings_df, aes(x = PC, y = variable, fill = loading)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = signif(loading, 3)), size = 3) +  # 3 significant figures
+  scale_fill_gradient2(
+    low = "#C62828", mid = "white", high = "#2E7D32", midpoint = 0
+  ) +
+  theme_minimal() +
+  labs(title = "PCA Loadings Heatmap (PC1 & PC2)",
+       x = "Principal Component",
+       y = "Original Variable") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+
+```
+
+```{r}
+# Variance of each PC
+var_explained <- pca$sdev^2
+
+# Proportion of variance explained
+prop_var <- var_explained / sum(var_explained)
+
+# Convert to a data frame for plotting
+var_df <- data.frame(
+  PC = paste0("PC", 1:length(prop_var)),
+  VarianceExplained = prop_var
+)
+
+var_df$VarianceExplainedPercent <- prop_var * 100
+
+ggplot(var_df, aes(x = reorder(PC, -VarianceExplainedPercent), 
+                   y = VarianceExplainedPercent)) +
+  geom_bar(stat = "identity", fill = "#66c2a5") +
+  geom_text(aes(label = sprintf("%.1f%%", VarianceExplainedPercent)), 
+            vjust = -0.5) +
+  theme_minimal() +
+  labs(title = "Variance Explained by Principal Components",
+       x = "Principal Component",
+       y = "Variance Explained (%)")
+
+```
+
+
+
+```{r}
+library(reshape2)
+table_mat <- xtabs(count ~ cluster + SEQ, data = seq)
+chisq_res <- chisq.test(table_mat)
+residuals <- chisq_res$stdres
+res_df <- melt(residuals)
+colnames(res_df) <- c("cluster", "SEQ", "stdres")
+
+ggplot(res_df, aes(x = SEQ, y = cluster, fill = stdres)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
+  theme_minimal() +
+  labs(title = "Chi-squared Standardized Residuals",
+       x = "Sequence",
+       y = "Cluster")
+```
+
+
+```{r}
+seq_vec <- res_df %>% arrange(SEQ) %>% pull(SEQ)
+
+
+# [1] 1440
+
+# Split into 24 groups of 60
+seq_groups <- split(seq_vec, gl(24, 60, labels = paste0("Group_", 1:24)))
+
+for (i in 1:length(seq_groups)) {
+  seqs <- unlist(lapply(unique(na.omit(unlist(seq_groups[[i]]))),as.character))
+  if (length(seqs) == 0) next  # skip empty group
+  
+  p <- ggseqlogo(seqs, method = "prob") +
+    theme_minimal() +
+    ggtitle(paste("7-mer Sequence Logo - Group", i))
+  
+  print(p)
+}
+
+```

@@ -1,0 +1,269 @@
+---
+title: "TvsT"
+output: html_document
+date: "2025-10-09"
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+```
+
+## Data read
+
+```{r}
+df <- read_csv('output_w_label.csv', show_col_types = FALSE) %>% 
+  select(-'...1')
+
+head(df)
+```
+
+## Proportioning
+
+```{r}
+prop <- df %>% 
+  distinct(ID, POS, .keep_all=T) %>%
+  summarize(.by=c(SEQ), 
+            positive_count = sum(label),
+            total_count = n(),
+            prop = positive_count / total_count)
+  
+```
+
+## First Character
+A <-> T, A <-> G, A <-> C, 
+G <-> T, G <-> C, 
+C <-> T
+
+
+```{r}
+
+
+# Define base pairs for all comparisons
+base_pairs <- combn(c("A", "T", "G", "C"), 2, simplify = FALSE)
+
+# Function to compute absolute prop differences for a given pair
+compare_pair <- function(df, b1, b2) {
+  df_pair <- df %>%
+    filter(str_starts(SEQ, b1) | str_starts(SEQ, b2)) %>%
+    mutate(suffix = str_sub(SEQ, 2, 7)) %>%
+    group_by(suffix) %>%
+    filter(n() == 2) %>%  # ensure both bases present
+    summarise(abs_diff = abs(diff(prop)), .groups = "drop") %>%
+    mutate(pair = paste0(b1, "-", b2))
+  
+  return(df_pair)
+}
+
+# Apply function for all base pairs
+pair_diffs <- map_dfr(base_pairs, ~ compare_pair(prop, .x[1], .x[2]))
+
+# Annotate transition vs transversion
+pair_diffs <- pair_diffs %>%
+  mutate(type = case_when(
+    pair %in% c("A-G", "G-A", "C-T", "T-C") ~ "Transition",
+    TRUE ~ "Transversion"
+  ))
+
+# ---- Visualization ----
+
+# Option 1: Boxplot comparing transition vs transversion
+ggplot(pair_diffs, aes(x = type, y = abs_diff, color = type)) +
+  geom_boxplot(outlier.shape = NA, width = 0.4) +
+  geom_jitter(width = 0.1, alpha = 0.6) +
+  theme_minimal() +
+  labs(title = "Absolute prop difference by mutation type",
+       x = "Mutation type",
+       y = "Absolute difference in prop") +
+  theme(legend.position = "none")
+
+# Option 2: Points per base-pair
+ggplot(pair_diffs, aes(x = pair, y = abs_diff, color = type)) +
+  geom_jitter(width = 0.2, height = 0, alpha = 0.6) +
+  theme_minimal() +
+  labs(title = "Pairwise absolute prop differences",
+       x = "Base pair comparison", y = "Absolute difference") +
+  scale_color_manual(values = c("Transition" = "#1f78b4", "Transversion" = "#e31a1c"))
+
+
+
+```
+
+
+```{r}
+
+# Define base pairs for all comparisons
+base_pairs <- combn(c("A", "T", "G", "C"), 2, simplify = FALSE)
+
+# Function to compute absolute prop differences for a given pair at a given position
+compare_pair_pos <- function(df, b1, b2, pos) {
+  df_pair <- df %>%
+    # Filter: keep sequences with either base at this position
+    filter(str_sub(SEQ, pos, pos) %in% c(b1, b2)) %>%
+    # Replace the base at that position with '.' (so we can group by the rest)
+    mutate(pattern = paste0(
+      str_sub(SEQ, 1, pos - 1),
+      ".",
+      str_sub(SEQ, pos + 1, 7)
+    )) %>%
+    group_by(pattern) %>%
+    filter(n() == 2) %>%  # ensure both bases exist for that pattern
+    summarise(abs_diff = (diff(prop)), .groups = "drop") %>%
+    mutate(pair = paste0(b1, "-", b2),
+           pos = pos)
+  
+  return(df_pair)
+}
+
+# Example: run across all 7 positions
+pair_diffs <- map_dfr(1:7, function(pos) {
+  map_dfr(base_pairs, ~ compare_pair_pos(prop, .x[1], .x[2], pos))
+})
+
+# Annotate transition vs transversion
+pair_diffs <- pair_diffs %>%
+  mutate(type = case_when(
+    pair %in% c("A-G", "G-A", "C-T", "T-C") ~ "Transition",
+    TRUE ~ "Transversion"
+  ))
+
+# ---- Visualization ----
+
+# Option 1: Boxplot comparing transition vs transversion by position
+ggplot(pair_diffs, aes(x = factor(pos), y = abs_diff, color = type)) +
+  geom_boxplot(outlier.shape = NA, width = 0.5) +
+  geom_jitter(width = 0.1, alpha = 0.6) +
+  theme_minimal() +
+  labs(title = "Absolute prop difference by position and mutation type",
+       x = "Position (1–7)",
+       y = "Absolute difference in prop") +
+  theme(legend.position = "top")
+
+# Option 2: Points per base-pair
+ggplot(pair_diffs, aes(x = pair, y = abs_diff, color = type)) +
+  geom_jitter(width = 0.2, height = 0, alpha = 0.6) +
+  facet_wrap(~ pos, scales = "free_x") +
+  theme_minimal() +
+  labs(title = "Pairwise absolute prop differences by position",
+       x = "Base pair comparison", y = "Absolute difference") +
+  scale_color_manual(values = c("Transition" = "#1f78b4", "Transversion" = "#e31a1c"))
+
+
+
+```
+
+
+```{r}
+
+# Define base pairs for all comparisons
+base_pairs <- combn(c("A", "T", "G", "C"), 2, simplify = FALSE)
+cols_to_normalize <- c("PreTime", "PreSD", "PreMean",
+                       "InTime", "InSD", "InMean",
+                       "PostTime", "PostSD", "PostMean")
+
+prop_nex <- df %>%
+  mutate(across(all_of(cols_to_normalize), 
+                ~ (.-mean(., na.rm = TRUE)) / sd(., na.rm = TRUE))) %>% 
+  summarize(.by=c(SEQ), 
+            PreTime = mean(PreTime),
+            PreSD = mean(PreSD), 
+            PreMean = mean(PreMean),
+            InTime = mean(InTime),
+            InSD = mean(InSD),
+            InMean = mean(InMean),
+            PostTime = mean(PostTime),
+            PostSD = mean(PostSD),
+            PostMean = mean(PostMean),
+            label = max(label))
+
+
+# Function to compute absolute prop differences for a given pair at a given position
+compare_pair_pos <- function(df, b1, b2, pos, colnames) {
+  df_pair <- df %>%
+    # Keep only rows where this position matches b1 or b2
+    filter(str_sub(SEQ, pos, pos) %in% c(b1, b2)) %>%
+    # Replace the base at that position with '.' so we can group by the rest
+    mutate(pattern = paste0(
+      str_sub(SEQ, 1, pos - 1),
+      ".",
+      str_sub(SEQ, pos + 1, 7)
+    )) %>%
+    group_by(pattern) %>%
+    filter(n() == 2) %>%  # Ensure both bases exist for that pattern
+    summarise(
+      euclidean_diff = sqrt(sum((diff(as.matrix(cur_data()[, colnames])))^2)),
+      .groups = "drop"
+    ) %>%
+    mutate(pair = paste0(b1, "-", b2),
+           pos = pos)
+  
+  return(df_pair)
+}
+
+# Example: run across all 7 positions
+pair_diffs <- map_dfr(1:7, function(pos) {
+  map_dfr(base_pairs, ~ compare_pair_pos(prop_nex, .x[1], .x[2], pos, cols_to_normalize))
+})
+
+# Annotate transition vs transversion
+pair_diffs <- pair_diffs %>%
+  mutate(type = case_when(
+    pair %in% c("A-G", "G-A", "C-T", "T-C") ~ "Transition",
+    TRUE ~ "Transversion"
+  ))
+
+# ---- Visualization ----
+
+# Option 1: Boxplot comparing transition vs transversion by position
+ggplot(pair_diffs, aes(x = factor(pos), y = euclidean_diff, color = type)) +
+  geom_boxplot(outlier.shape = NA, width = 0.5) +
+  geom_jitter(width = 0.1, alpha = 0.6) +
+  theme_minimal() +
+  labs(title = "Absolute prop difference by position and mutation type",
+       x = "Position (1–7)",
+       y = "Absolute difference in prop") +
+  theme(legend.position = "top")
+
+# Option 2: Points per base-pair
+ggplot(pair_diffs, aes(x = pair, y = euclidean_diff, color = type)) +
+  geom_jitter(width = 0.2, height = 0, alpha = 0.6) +
+  facet_wrap(~ pos, scales = "free_x") +
+  theme_minimal() +
+  labs(title = "Pairwise absolute prop differences by position",
+       x = "Base pair comparison", y = "Absolute difference") +
+  scale_color_manual(values = c("Transition" = "#1f78b4", "Transversion" = "#e31a1c"))
+
+
+
+```
+
+
+```{r}
+y <- (df[['PreTime']])^(1/3)
+
+# 3. Plot histogram and overlay normal density
+hist(y, breaks = 50, freq = FALSE, col = "lightblue",
+     main = expression("Cube-root of"~chi^2(3)))
+
+```
+
+```{r}
+new <- df %>% 
+  distinct(ID, POS, SEQ, .keep_all=T) %>%
+  mutate(
+    # Remove last character
+    temp = str_sub(SEQ, 1, -2),
+    # Modify 6th character
+    modified_seq = ifelse(
+      str_length(temp) >= 6 & str_sub(temp, 6, 6) == "T",
+      paste0(str_sub(temp, 1, 5), "A", str_sub(temp, 7, -1)),
+      temp
+    )
+  ) %>%
+  select(-temp) %>% # Remove temporary column 
+  summarize(.by=c(modified_seq),
+            positive_count = sum(label),
+            total_count = n(),
+            prop = positive_count / total_count)
+
+
+```
