@@ -1,4 +1,4 @@
-Put the Dataset0 into the folder "Dataset" and hit run all for "Data Processing Part 1.ipynb" to create a "before_embedding.parquet".
+Put the Dataset0 (the one cherron have unnamed as one of its column) into the folder "Raw File" and hit run all for "Data Processing Part 1.ipynb" to create a "before_embedding.parquet".
 
 
 In "Data Processing Part 2.ipynb", currently using latent_dim 2/3 and use_unique_kmers = True/False. Creating total of 4 different encoders and also 4 different dataset.
