@@ -7,5 +7,5 @@ zcat $1 |
 			if (length(a[j]) > 1){printf ",%s", a[j]};};
 		printf "\n"}}}}' >  $2
 
-sed -i '1i\ID,POS,SEQ,PreTime,PreSD,PreMean,InTime,InSD,InMean,PostTime,PostSD,PostMean' $2
+sed -i '1i\transcript_id,transcript_pos,7mer,PreTime,PreSD,PreMean,InTime,InSD,InMean,PostTime,PostSD,PostMean' $2
 gzip $2
