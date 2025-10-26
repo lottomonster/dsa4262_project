@@ -467,14 +467,21 @@ def main(config=None):
 # Script entry point
 # =========================
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Train or inference a model")
-    parser.add_argument("--input_file", type=str, help="Path to input parquet file")
-    parser.add_argument("--output_path", type=str, help="Output directory")
-    parser.add_argument("--rng", type=int, help="Random seed")
-    parser.add_argument("--split_ratios", type=str, help="Train/Test split as JSON, e.g., '{\"Train\":0.8,\"Test\":0.2}'")
-    parser.add_argument("--monitor", type=str, choices = ['val_pr_auc', 'val_roc_auc', 'val_roc_plus_pr'], help="Validation Metric used for early stopping")
-    parser.add_argument("--patience", type=int, help="Number of epoch where there is no improvement in monitor before early stopping")
-    parser.add_argument("--k_fold_splits", type=int, help="Number of k-fold, set this this 0 or 1 to skip k-fold validation")
+    parser = argparse.ArgumentParser(description="Train a model")
+    parser.add_argument("--input_file", type=str, 
+                        help=f"Path to input parquet file (default: {DEFAULT_CONFIG['input_file']})")
+    parser.add_argument("--output_path", type=str, 
+                        help=f"Output directory (default: {DEFAULT_CONFIG['output_path']})")
+    parser.add_argument("--rng", type=int, 
+                        help=f"Random seed (default: {DEFAULT_CONFIG['rng']})")
+    parser.add_argument("--split_ratios", type=str, 
+                        help=f"Train/Test split as JSON (default: {json.dumps(DEFAULT_CONFIG['split_ratios'])})")
+    parser.add_argument("--monitor", type=str, choices=['val_pr_auc', 'val_roc_auc', 'val_roc_plus_pr'], 
+                        help=f"Validation Metric used for early stopping (default: {DEFAULT_CONFIG['monitor']})")
+    parser.add_argument("--patience", type=int, 
+                        help=f"Number of epochs where there is no improvement in monitor before early stopping (default: {DEFAULT_CONFIG['patience']})")
+    parser.add_argument("--k_fold_splits", type=int, 
+                        help=f"Number of k-fold, set this to 0 or 1 to skip k-fold validation (default: {DEFAULT_CONFIG['k_fold_splits']})")
     args = parser.parse_args()
 
     # Merge config

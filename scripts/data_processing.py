@@ -145,7 +145,7 @@ def main(config=None):
 # Script entry point
 # =========================
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run data processing step 1")
+    parser = argparse.ArgumentParser(description="Run data processing")
     parser.add_argument("--mode", type=str, choices=["train", "inference"],
                         help=f"Run mode (default: {DEFAULT_CONFIG['mode']})")
     parser.add_argument("--input_file", type=str,
