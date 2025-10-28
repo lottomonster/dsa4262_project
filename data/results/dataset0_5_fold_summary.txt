@@ -1,0 +1,8 @@
+Fold 0: ROC-AUC=0.9246, PR-AUC=0.4830, epochs=53
+Fold 1: ROC-AUC=0.9090, PR-AUC=0.4715, epochs=32
+Fold 2: ROC-AUC=0.9297, PR-AUC=0.5284, epochs=52
+Fold 3: ROC-AUC=0.9235, PR-AUC=0.4845, epochs=63
+Fold 4: ROC-AUC=0.9153, PR-AUC=0.4712, epochs=58
+
+Mean ROC-AUC: 0.9204 ± 0.0073
+Mean PR-AUC : 0.4877 ± 0.0211

@@ -1,13 +1,6 @@
 import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '1'
 import sys
-if "__file__" in globals():
-    script_dir = os.path.dirname(__file__)
-else:
-    # Fallback: assume current working directory
-    script_dir = os.getcwd()
-
-sys.path.append(os.path.abspath(os.path.join(script_dir, "..")))
 import random
 import argparse
 from pathlib import Path
@@ -30,16 +23,19 @@ from sklearn.metrics import classification_report, roc_auc_score, precision_reca
 
 
 # =========================
-# Default config
+# Default Config for Training
 # =========================
 DEFAULT_CONFIG = {
     "input_file": "../data/processed/dataset0_processed.parquet",
     "output_path": "../data/results",
     "rng": 42,
-    "split_ratios": {"Train": 0.85, "Test": 0.15},
-    "monitor": "val_pr_auc",                            # val_pr_auc, val_roc_auc, val_roc_plus_pr
+    "split_ratio": {"Train": 0.85, "Test": 0.15},       # user will just input 2 float number that should sum to 1
+    "monitor": "val_pr_auc",                            # val_pr_auc, val_roc_auc
     "patience": 20,                                     # this is the number of epoch where monitor does not improve before early stopping kicks in
-    "k_fold_splits": 5,                                 # set this to 0 or 1 to skip k_fold modelling
+    "k_fold_splits": 5,                                 # if this is smaller than 2 it will skip k-fold validation even if run_kfold is True
+    "train_val_ratio" : {"Train": 0.95, "Test": 0.05} , # user will just input 2 float number that should sum to 1
+    "run_kfold": False,                                 # whether to perform k-fold validation
+    "run_full_model": True,                             # whether to train and validate model based on train_val_ratio, all of the dataset to participate in the training
 }
 
 print("List of GPUs: ", tf.config.list_physical_devices('GPU'))
@@ -47,31 +43,9 @@ print("Num GPUs Available: ", len(tf.config.experimental.list_physical_devices('
 
 
 # =========================
-# Metric class for combined AUC
-# =========================
-class CombinedAUC(tf.keras.metrics.Metric):
-    def __init__(self, name="combined_auc", **kwargs):
-        super().__init__(name=name, **kwargs)
-        self.roc_auc = tf.keras.metrics.AUC(curve="ROC", name="roc_auc")
-        self.pr_auc = tf.keras.metrics.AUC(curve="PR", name="pr_auc")
-
-    def update_state(self, y_true, y_pred, sample_weight=None):
-        self.roc_auc.update_state(y_true, y_pred, sample_weight=sample_weight)
-        self.pr_auc.update_state(y_true, y_pred, sample_weight=sample_weight)
-
-    def result(self):
-        return self.roc_auc.result() + self.pr_auc.result()
-
-    def reset_state(self):
-        self.roc_auc.reset_state()
-        self.pr_auc.reset_state()
-
-
-# =========================
 # Build model
 # =========================
 def build_model(input_dim):
-    tf.random.set_seed(42)
 
     model = Sequential(
         [
@@ -95,24 +69,93 @@ def build_model(input_dim):
         loss="binary_crossentropy",
         metrics=[
             tf.keras.metrics.AUC(name="roc_auc"),
-            tf.keras.metrics.AUC(curve="PR", name="pr_auc"),
-            CombinedAUC(name="roc_plus_pr"),
+            tf.keras.metrics.AUC(curve="PR", name="pr_auc")
         ],
     )
     return model
 
 
 # =========================
+# Anti Intrusive Thoughts
+# =========================
+def validate_ratios(ratio_dict, name):
+    if not isinstance(ratio_dict, dict):   # this check unlikely required after modifications to arguments passed
+        raise ValueError(f"{name} must be a JSON object like {{'Train': 0.8, 'Test': 0.2}}.")
+
+    if set(ratio_dict.keys()) != {"Train", "Test"}:     # this check unlikely required after modifications to arguments passed
+        raise ValueError(f"{name} must have exactly 'Train' and 'Test' keys (current keys: {list(ratio_dict.keys())})")
+
+    if not all(isinstance(v, (int, float)) for v in ratio_dict.values()):
+        raise ValueError(f"All values in {name} must be numbers.")
+
+    if any(v <= 0 for v in ratio_dict.values()):
+        raise ValueError(f"All values in {name} must be positive and greater than zero.")
+
+    total = sum(ratio_dict.values())        # this check unlikely as similar check was performed before 
+    if abs(total - 1.0) > 1e-6:
+        raise ValueError(f"The values in {name} must sum to 1.0 (current total = {total}).")
+
+def validate_kfold(run_kfold, splits):
+    if run_kfold and (not isinstance(splits, int) or splits < 2):
+        raise ValueError(f"k_fold_splits must be >= 2 when run_kfold=True. Got {splits}.")
+    if not run_kfold and splits >= 2:
+        print("[Warning] k_fold_splits provided but run_kfold=False. Ignoring.")
+
+def validate_monitor(monitor):
+    if monitor not in ["val_pr_auc", "val_roc_auc"]:
+        raise ValueError(f"Invalid monitor: {monitor}")
+
+def validate_patience(patience):
+    if not isinstance(patience, int) or patience < 1:
+        raise ValueError(f"Patience must be positive integer, got {patience}")
+
+
+# =========================
+# Path Function
+# =========================
+def resolve_paths(config):
+    # Determine script directory
+    if "__file__" in globals():
+        script_dir = Path(__file__).parent
+    else:
+        script_dir = Path.cwd()
+
+    # Input file
+    input_file = Path(config["input_file"])
+    if not input_file.is_absolute():
+        input_file = (Path(script_dir) / Path(config["input_file"])).resolve()
+
+    # Output path
+    output_path = Path(config["output_path"])
+    if not output_path.is_absolute():
+        output_path = (Path(script_dir) / Path(config["output_path"])).resolve()
+    os.makedirs(output_path, exist_ok=True)
+
+    # Determine base name for outputs
+    base = input_file.stem
+    if "_processed" in base:
+        base = base.replace("_processed", "")
+
+    print(f"\nInput file: {input_file}")
+    print(f"\nOutput path: {output_path}")
+    print(f"\nBase name for outputs: {base}")
+
+    return input_file, output_path, base
+
+
+# =========================
 # Dataset splitting
 # =========================
-def assign_train_test_split(reads_df, split_ratios={'Train': 0.85, 'Test': 0.15}, random_state=42):
+def assign_train_test_split(reads_df, split_ratio=DEFAULT_CONFIG['split_ratio'], random_state=DEFAULT_CONFIG['rng']):
     """
     Assign each row in reads_df a 'set_type' of Train or Test.
     Ensures:
         - All rows with the same gene_id are in the same set
-        - Total number of rows in each set matches split_ratios closely
+        - Total number of rows in each set matches split_ratio closely
         - Label balance is approximately preserved
     """
+    # Go away SettingWithCopyError
+    reads_df = reads_df.copy()
 
     # Step 1: Compute per-gene statistics
     gene_stats = (
@@ -128,17 +171,17 @@ def assign_train_test_split(reads_df, split_ratios={'Train': 0.85, 'Test': 0.15}
     # Shuffle genes
     gene_stats = gene_stats.sample(frac=1, random_state=random_state).reset_index(drop=True)
 
-    # Step 2: Compute total targets
+    # Compute total targets
     total_rows = gene_stats['total'].sum()
-    target_rows = {k: total_rows * v for k, v in split_ratios.items()}
+    target_rows = {k: total_rows * v for k, v in split_ratio.items()}
 
-    # Step 3: Initialize bins for Train and Test sets
-    bins = {k: {'genes': [], 'total': 0, 'label_0': 0, 'label_1': 0} for k in split_ratios}
+    # nitialize bins for Train and Test sets
+    bins = {k: {'genes': [], 'total': 0, 'label_0': 0, 'label_1': 0} for k in split_ratio}
 
-    # Step 4: Sort genes largest → smallest to improve fit
+    # Sort genes largest → smallest to improve fit
     gene_stats = gene_stats.sort_values('total', ascending=False).reset_index(drop=True)
 
-    # Step 5: Greedy assignment to keep splits close to target
+    # Greedy assignment to keep splits close to target
     for _, row in gene_stats.iterrows():
         # Calculate deficit for each bin
         deficits = {k: target_rows[k] - bins[k]['total'] for k in bins}
@@ -150,17 +193,17 @@ def assign_train_test_split(reads_df, split_ratios={'Train': 0.85, 'Test': 0.15}
         bins[chosen_bin]['label_0'] += row['label_0']
         bins[chosen_bin]['label_1'] += row['label_1']
 
-    # Step 6: Map genes to set_type
+    # Map genes to set_type
     gene_to_set = {gene_id: set_name for set_name, data in bins.items() for gene_id in data['genes']}
     reads_df['set_type'] = reads_df['gene_id'].map(gene_to_set)
 
-    # Step 7: Create train and test datasets
+    # Create train and test datasets
     train_df = reads_df[reads_df['set_type'] == 'Train']
     test_df = reads_df[reads_df['set_type'] == 'Test']
 
-    # Step 8: Print achieved ratios
+    # Print achieved ratio
     actual_counts = reads_df['set_type'].value_counts(normalize=True).to_dict()
-    print("Dataset sizes:")
+    print("\nDataset sizes:")
     print(f"  - Train: {len(train_df):,} rows")
     print(f"  - Test: {len(test_df):,} rows")
 
@@ -175,12 +218,11 @@ def assign_train_test_split(reads_df, split_ratios={'Train': 0.85, 'Test': 0.15}
 # =========================
 # Fold assignment
 # =========================
-def assign_fold_split(train_df, n_splits=5, random_state=42):
+def assign_fold_split(train_df, n_splits=DEFAULT_CONFIG['k_fold_splits'], random_state=DEFAULT_CONFIG['rng']):
     """
     Assign each gene to a fold (0 .. n_splits-1) for cross-validation.
-    Ensures all rows of a gene are in the same fold and roughly preserves label ratios.
+    Ensures all rows of a gene are in the same fold and roughly preserves label ratio.
     """
-
     # Just go away SettingWithCopyError
     train_df = train_df.copy()
 
@@ -201,7 +243,7 @@ def assign_fold_split(train_df, n_splits=5, random_state=42):
         folds[fold_idx]["label_sum"] += row["label"]
         folds[fold_idx]["n_genes"] += 1
 
-    # Map gene_id → fold
+    # Map gene_id to fold
     gene_to_fold = {gene: f for f, data in folds.items() for gene in data["genes"]}
     train_df.loc[:, "fold"] = train_df["gene_id"].map(gene_to_fold)
     
@@ -301,15 +343,14 @@ def k_fold_train(train_df, config, base, output_path):
     Perform k-fold cross-validation on train_df.
     Returns: list of trained models, scalers, fold metrics
     """
-    n_splits = config.get("k_fold_splits", 5)
+    n_splits = config['k_fold_splits']
 
     # Assign folds to genes
     train_df = assign_fold_split(train_df, n_splits=n_splits, random_state=config['rng'])
 
-    # fold_models = []
-    # fold_scalers = []
     fold_metrics = []
 
+    # k-fold validation
     for fold in range(n_splits):
 
         fold_train_df = train_df[train_df["fold"] != fold]
@@ -329,25 +370,26 @@ def k_fold_train(train_df, config, base, output_path):
         roc = roc_auc_score(y_val, y_pred_prob)
         precision, recall, _ = precision_recall_curve(y_val, y_pred_prob)
         pr = auc(recall, precision)
-  
 
         n_epochs_ran = len(history.history['loss'])
+        fold_metrics.append({"fold": fold, "roc_auc": roc, "pr_auc": pr, "epochs": n_epochs_ran})
+        
         print(f"Fold {fold}: ROC-AUC={roc:.4f}, PR-AUC={pr:.4f}, Epochs ran: {n_epochs_ran}")
 
-    # Summarize
+    # Summarise
     mean_roc = np.mean([m["roc_auc"] for m in fold_metrics])
     std_roc = np.std([m["roc_auc"] for m in fold_metrics])
     mean_pr = np.mean([m["pr_auc"] for m in fold_metrics])
     std_pr = np.std([m["pr_auc"] for m in fold_metrics])
 
+    # Saving a k-fold summary results
     summary_file = output_path / f"{base}_{n_splits}_fold_summary.txt"
     with open(summary_file, "w") as f:
         for m in fold_metrics:
-            f.write(f"Fold {m['fold']}: ROC-AUC={m['roc_auc']:.4f}, PR-AUC={m['pr_auc']:.4f}\n")
+            f.write(f"Fold {m['fold']}: ROC-AUC={m['roc_auc']:.4f}, PR-AUC={m['pr_auc']:.4f}, epochs={m['epochs']}\n")
         f.write(f"\nMean ROC-AUC: {mean_roc:.4f} ± {std_roc:.4f}\n")
         f.write(f"Mean PR-AUC : {mean_pr:.4f} ± {std_pr:.4f}\n")
-
-    print(f"K-Fold summary saved to: {summary_file}")
+    print(f"\nK-Fold summary saved to: {summary_file}")
 
     return fold_metrics
 
@@ -365,7 +407,7 @@ def plot_and_save_models(model, scaler, history, output_path, base, extra_name="
     """
 
     # Plot ROC-AUC curve
-    print(f"Plotting ROC-AUC curve ({extra_name})...")
+    print(f"\nPlotting ROC-AUC curve ({extra_name})...")
     plt.figure(figsize=(10,5))
     plt.plot(history.history['roc_auc'], label='Train ROC-AUC')
     if 'val_roc_auc' in history.history:
@@ -375,12 +417,12 @@ def plot_and_save_models(model, scaler, history, output_path, base, extra_name="
     plt.legend()
     plt.title(f'Training vs Validation ROC-AUC ({extra_name})')
     plt.tight_layout()
-    plt.savefig(output_path / f"{base}_{extra_name}_roc_auc_curve.png", dpi=300)
+    plt.savefig(output_path / f"{base}_{extra_name}_training_vs_validation_roc_auc_curve.png", dpi=300)
     plt.close()
     print(f"ROC-AUC curve ({extra_name}) saved")
 
     # Plot PR-AUC curve
-    print(f"Plotting PR-AUC curve ({extra_name})...")
+    print(f"\nPlotting PR-AUC curve ({extra_name})...")
     plt.figure(figsize=(10,5))
     plt.plot(history.history['pr_auc'], label='Train PR-AUC')
     if 'val_pr_auc' in history.history:
@@ -390,14 +432,14 @@ def plot_and_save_models(model, scaler, history, output_path, base, extra_name="
     plt.legend()
     plt.title(f'Training vs Validation PR-AUC ({extra_name})')
     plt.tight_layout()
-    plt.savefig(output_path / f"{base}_{extra_name}_pr_auc_curve.png", dpi=300)
+    plt.savefig(output_path / f"{base}_{extra_name}_training_vs_validation_pr_auc_curve.png", dpi=300)
     plt.close()
     print(f"PR-AUC curve ({extra_name}) saved")
 
     # Save model and scaler
     joblib.dump(scaler, output_path / f"{base}_{extra_name}_scaler.pkl")
     model.save(output_path / f"{base}_{extra_name}_model.keras")
-    print(f"Model and scaler ({extra_name}) saved to {output_path}")
+    print(f"\nModel and scaler ({extra_name}) saved to {output_path}")
 
 # =========================
 # Main function
@@ -412,79 +454,120 @@ def main(config=None):
     tf.random.set_seed(random_state)
     random.seed(random_state)
     os.environ["PYTHONHASHSEED"] = str(random_state)
-    print(f"Random seeds set to {random_state}")
+    print(f"\nRandom seeds set to {random_state}")
 
-    # Paths
-    input_file = (Path(script_dir) / Path(config.get("input_file"))).resolve()
-    output_path = (Path(script_dir) / Path(config.get("output_path"))).resolve()
-    os.makedirs(output_path, exist_ok=True)
-    base = input_file.stem
-    if "_processed" in base:
-        base = base.replace("_processed", "")
-    print(f"Input file: {input_file}")
-    print(f"Output path: {output_path}")
-    print(f"Base name for outputs: {base}")
+    # Set Paths
+    input_file, output_path, base = resolve_paths(config)
 
     # Load data
     df = pd.read_parquet(input_file)
     df = df.drop(columns=["Unnamed: 0"], errors="ignore")
-    print(f"Data loaded: {len(df)} rows, {len(df.columns)} columns")
+    print(f"\nData loaded: {len(df)} rows, {len(df.columns)} columns")
 
     # Train/test split
     print("Performing train/test split...")
-    trainval_df, test_df = assign_train_test_split(df, config['split_ratios'], random_state)
+    trainval_df, test_df = assign_train_test_split(df, config['split_ratio'], random_state)
 
     # K-fold cross-validation, Split and Train 
-    if config['k_fold_splits'] > 1:
-        print(f"Starting {config['k_fold_splits']}-fold cross-validation...")
-        fold_metrics = k_fold_train(trainval_df, config, base=base, output_path=output_path)
-        print("K-fold cross-validation completed")
+    if config['k_fold_splits'] > 1 and config['run_kfold']:
+        print(f"\nStarting {config['k_fold_splits']}-fold cross-validation...")
+        k_fold_train(trainval_df, config, base=base, output_path=output_path)
+        print("\nK-fold cross-validation completed")
 
-    # Train and Validate on Training set, Test on Testing
-    print("Training and Validating model on train set and evaluating on test set...")
-    X_trainval_df = trainval_df.drop(columns=["gene_id", "transcript_id", "transcript_position", "label", "set_type", "fold"], errors="ignore")
-    y_trainval_df = trainval_df["label"]
+
+    train_num_split = config['split_ratio']['Train']*100
+    test_num_split = config['split_ratio']['Test']*100
+    train_test_split_name = f"{train_num_split}_{test_num_split}"
+
+    # Training and Validating on Train set, Testing on Test set
+    print(f"\nStarting model training: training on {train_num_split}% of the training data, validating on {test_num_split}% of the training data, and testing on {test_num_split}% of the entire dataset")
+    train_df, val_df = assign_train_test_split(trainval_df, config['split_ratio'], random_state)
+    X_train_df = train_df.drop(columns=["gene_id", "transcript_id", "transcript_position", "label", "set_type", "fold"], errors="ignore")
+    y_train_df = train_df["label"]
+    X_val_df = val_df.drop(columns=["gene_id", "transcript_id", "transcript_position", "label", "set_type", "fold"], errors="ignore")
+    y_val_df = val_df["label"]
     X_test = test_df.drop(columns=["gene_id", "transcript_id", "transcript_position", "label", "set_type", "fold"], errors="ignore")
     y_test = test_df["label"]
 
-    model, scaler, history = train_and_evaluate(X_trainval_df, y_trainval_df, X_trainval_df, y_trainval_df, X_test, y_test, config, base, output_path, extra_name= "_test_split_", save = True)
-    plot_and_save_models(model, scaler, history, output_path, base, extra_name="test_split")
-    print("Training and evaluation completed for training/validation vs test")
+    model, scaler, history = train_and_evaluate(X_train_df, y_train_df, X_val_df, y_val_df, X_test, y_test, config, base, output_path, extra_name= f"_{train_test_split_name}_", save = True)
+    plot_and_save_models(model, scaler, history, output_path, base, extra_name=f"{train_test_split_name}")
+    print(f"\nModel training complete")
 
     # Full train/validation set
-    print("Performing full train/validation split (95/5), train model on train split(95) and validating on validation split(5)...")
-    full_train_df, full_val_df = assign_train_test_split(df, {"Train": 0.95, "Test": 0.05}, random_state)
-    X_full_train = full_train_df.drop(columns=["gene_id", "transcript_id", "transcript_position", "label", "set_type", "fold"], errors="ignore")
-    y_full_train = full_train_df["label"]
-    X_full_val = full_val_df.drop(columns=["gene_id", "transcript_id", "transcript_position", "label", "set_type", "fold"], errors="ignore")
-    y_full_val = full_val_df["label"]
+    if config['run_full_model']:
+        train_num_split = config['train_val_ratio']['Train']*100
+        test_num_split = config['train_val_ratio']['Test']*100
+        print(f"\nPerforming full train/validation split, training model on train split({train_num_split}%) and validating on validation split({test_num_split}%)...")
+        full_train_df, full_val_df = assign_train_test_split(df, config['train_val_ratio'], random_state)
+        X_full_train = full_train_df.drop(columns=["gene_id", "transcript_id", "transcript_position", "label", "set_type", "fold"], errors="ignore")
+        y_full_train = full_train_df["label"]
+        X_full_val = full_val_df.drop(columns=["gene_id", "transcript_id", "transcript_position", "label", "set_type", "fold"], errors="ignore")
+        y_full_val = full_val_df["label"]
 
-    model, scaler, history = train_and_evaluate(X_full_train, y_full_train, X_full_val, y_full_val, X_full_val, y_full_val, config, base, output_path, extra_name= "_full_", save = True)
-    plot_and_save_models(model, scaler, history, output_path, base, extra_name="full")
-    print("Full training completed")
+        model, scaler, history = train_and_evaluate(X_full_train, y_full_train, X_full_val, y_full_val, X_full_val, y_full_val, config, base, output_path, extra_name= "_full_", save = True)
+        plot_and_save_models(model, scaler, history, output_path, base, extra_name="full")
+        print("\nFull training completed")
+    print("\nWe have reached the end of the training. Thank you for the wait. Have a nice day!")
 
 # =========================
 # Script entry point
 # =========================
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Train a model")
+    parser = argparse.ArgumentParser(description="How to Train a Model")
     parser.add_argument("--input_file", type=str, 
-                        help=f"Path to input parquet file (default: {DEFAULT_CONFIG['input_file']})")
+                        help=f"Path to input parquet file. Take note it is relative to where this script is stored (default: {DEFAULT_CONFIG['input_file']})")
     parser.add_argument("--output_path", type=str, 
-                        help=f"Output directory (default: {DEFAULT_CONFIG['output_path']})")
+                        help=f"Output directory. Take note it is relative to where this script is stored (default: {DEFAULT_CONFIG['output_path']})")
     parser.add_argument("--rng", type=int, 
                         help=f"Random seed (default: {DEFAULT_CONFIG['rng']})")
-    parser.add_argument("--split_ratios", type=str, 
-                        help=f"Train/Test split as JSON (default: {json.dumps(DEFAULT_CONFIG['split_ratios'])})")
-    parser.add_argument("--monitor", type=str, choices=['val_pr_auc', 'val_roc_auc', 'val_roc_plus_pr'], 
+    parser.add_argument("--split_ratio", type=float, nargs=2, metavar=('TRAIN', 'TEST'),
+                        help=f"Train/Test split ratio as two numbers that sum to 1.0. Example: --split_ratio 0.8 0.2 (default: {json.dumps(DEFAULT_CONFIG['split_ratio'])})")
+    parser.add_argument("--monitor", type=str, choices=['val_pr_auc', 'val_roc_auc'], 
                         help=f"Validation Metric used for early stopping (default: {DEFAULT_CONFIG['monitor']})")
     parser.add_argument("--patience", type=int, 
                         help=f"Number of epochs where there is no improvement in monitor before early stopping (default: {DEFAULT_CONFIG['patience']})")
+    parser.add_argument("--run_kfold", type=str, choices=["True", "False", "true", "false"],
+                        help=f"Enable or disable k-fold cross-validation (default: {DEFAULT_CONFIG['run_kfold']})")
     parser.add_argument("--k_fold_splits", type=int, 
-                        help=f"Number of k-fold, set this to 0 or 1 to skip k-fold validation (default: {DEFAULT_CONFIG['k_fold_splits']})")
+                        help=f"Number of folds for k-fold cross-validation. Must be ≥ 2 to enable k-fold (default: {DEFAULT_CONFIG['k_fold_splits']})")
+    parser.add_argument("--run_full_model", type=str, choices=["True", "False","true", "false"],
+                        help=f"Train the final model on the full dataset (no test split). Use for final production training (default: {DEFAULT_CONFIG['run_full_model']})")
+    parser.add_argument("--train_val_ratio", type=float, nargs=2, metavar=('TRAIN', 'VAL'),
+                        help=f"Train/validation split ratio used when training the full model. Must sum to 1.0. Example: --train_val_ratio 0.9 0.1 \
+                        (default: {json.dumps(DEFAULT_CONFIG['train_val_ratio'])})")
     args = parser.parse_args()
 
+    BOOL_KEYS = {"run_kfold", "run_full_model"}
+    JSON_KEYS = {"split_ratio", "train_val_ratio"}
+
+    config = DEFAULT_CONFIG.copy()
+
     # Merge config
-    config = {**DEFAULT_CONFIG, **{k: (json.loads(v) if k == "split_ratios" else v) 
-                                for k, v in vars(args).items() if v is not None}}
+    for k, v in vars(args).items():
+        if v is None:
+            continue
+
+        # Handle split_ratio and train_val_ratio
+        if k in {"split_ratio", "train_val_ratio"} and isinstance(v, list):
+            if abs(sum(v) - 1.0) > 1e-6:
+                raise ValueError(f"{k} values must sum to 1. Got {v}")
+            v = {"Train": v[0], "Test": v[1]} if k == "split_ratio" else {"Train": v[0], "Test": v[1]}
+
+        # Convert string "True"/"False" to boolean only for keys in BOOL_KEYS
+        elif k in BOOL_KEYS and isinstance(v, str):
+            v = (v.lower() == "true")
+
+        config[k] = v
+    
+    # In case someone has intrusive thoughts like me
+    try:
+        validate_ratios(config["split_ratio"], "split_ratio")
+        validate_ratios(config["train_val_ratio"], "train_val_ratio")
+        validate_kfold(config["run_kfold"], config["k_fold_splits"])
+        validate_monitor(config["monitor"])
+        validate_patience(config["patience"])
+    except ValueError as e:
+        print(f"[Config Error] {e}")
+        sys.exit(1)
+
     main(config)
