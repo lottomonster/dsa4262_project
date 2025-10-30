@@ -1,0 +1,595 @@
+---
+title: "Modification Analysis"
+output: html_document
+date: "2025-10-29"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(fitdistrplus)
+library(biomaRt)
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(rrvgo)
+
+
+get_FDR <- function(df, fdr_tolerance = 0.1, negative_tolerance = 0.65){
+  
+  # Example: null_scores = low-score peak (e.g., scores < 0.2)
+  null_scores <- df[df < negative_tolerance]
+  
+  # Shift zeros slightly (Beta requires >0 and <1)
+  null_scores <- pmin(pmax(null_scores, 1e-15), 1-1e-15)
+  
+  # Fit Beta
+  suppressWarnings({fit <- fitdist(null_scores, "beta", method="mle")})
+  
+
+  # Shift all scores slightly (avoid 0/1)
+  scores <- pmin(pmax(df, 1e-15), 1-1e-15)
+  
+  # p-value = P(score >= observed | null)
+  pval <- 1 - pbeta(scores, shape1=fit$estimate["shape1"], shape2=fit$estimate["shape2"])
+  
+  # Adjust p-values to control FDR
+  fdr <- p.adjust(pval, method = "BH")
+  
+  # Call significant m6A sites at FDR <= 0.05
+  (fdr <= 0.05)
+  
+}
+
+
+condense_runs <- function(path_list){
+  
+  df_list <- list()
+  
+  for (index in 1:length(path_list)){
+    
+    temp_df <- read_csv(pathlist[index], show_col_types = F) %>% 
+      na.omit()
+    temp_df$m6a <- get_FDR(temp_df$score)
+    
+    df_list[[index]] <- temp_df %>% dplyr::select(transcript_id, transcript_position, m6a)
+    
+  }
+  df <- df_list[[1]] %>%  
+      mutate(transcript_id = str_split(transcript_id, "\\.", simplify = TRUE)[,1])
+  
+  if (length(path_list) == 2){
+    df <- df %>% 
+      full_join(df_list[[2]],
+                 by=c("transcript_id", "transcript_position")) %>% 
+      mutate(m6a = case_when(
+        m6a.x == TRUE & m6a.y == TRUE ~ TRUE,
+        m6a.x == FALSE | m6a.y == FALSE ~ FALSE,
+        is.na(m6a.x) & m6a.y == TRUE ~ TRUE,
+        is.na(m6a.x) & m6a.y == FALSE ~ FALSE,
+        m6a.x == TRUE & is.na(m6a.y) ~ TRUE,
+        m6a.x == FALSE & is.na(m6a.y) ~ FALSE,
+        is.na(m6a.x) & is.na(m6a.y) ~ FALSE
+      )) %>%  
+      mutate(transcript_id = str_split(transcript_id, "\\.", simplify = TRUE)[,1]) %>% 
+      dplyr::select(-c(m6a.x, m6a.y))
+      
+  }
+  
+  df
+}
+mart <- useEnsembl(biomart = "ensembl", 
+                     dataset = "hsapiens_gene_ensembl")
+```
+
+
+## Viewing the experiments
+
+```{r}
+experiments <- list.files(path = "./data/") %>% 
+  data.frame() %>% 
+  setNames("filename") %>%
+  mutate(
+    cell_line = str_extract(filename, "^SGNex_([^_]+)_", group = 1),
+    replicate = as.numeric(str_extract(filename, "replicate(\\d+)", group = 1)),
+    run = as.numeric(str_extract(filename, "run(\\d+)", group = 1)))
+
+experiments
+
+```
+
+
+## Condensing the runs
+
+```{r}
+gene_list <- list()
+
+for (current_cell_line in unique(experiments$cell_line)){
+  
+  print(current_cell_line)
+  exp <- experiments %>% 
+    filter(cell_line == current_cell_line)
+  
+  replicates <- exp$replicate %>% unique()
+  
+  for (rep in replicates){
+    print(rep)
+    pathlist <- exp %>% 
+      filter(replicate==rep) %>% 
+      mutate(full_path = paste0("./data/", filename)) %>% 
+      pull(full_path)
+    
+    m6a_transcript <- condense_runs(pathlist) %>% 
+      filter(m6a) %>%
+      pull(transcript_id) %>% 
+      unique()
+    
+    pos_genes <- getBM(attributes = c("ensembl_gene_id"),
+                   filters = c("ensembl_transcript_id"),
+                   values = m6a_transcript,
+                   mart = mart) %>% 
+      pull(ensembl_gene_id) %>%
+      unique()
+    
+    gene_list[[length(gene_list)+1]] <- pos_genes
+      
+    
+  }
+  
+  
+}
+
+
+```
+
+
+
+```{r}
+common_expressed <- Reduce(intersect, gene_list)
+
+ego <- enrichGO(gene          = common_expressed,
+                OrgDb         = org.Hs.eg.db,
+                keyType       = "ENSEMBL",
+                ont           = "BP",  # "BP", "MF", or "CC"
+                pAdjustMethod = "BH",
+                pvalueCutoff  = 0.01,
+                qvalueCutoff = 0.05)
+
+
+# Calculate semantic similarity
+simMatrix <- calculateSimMatrix(ego$ID,
+                                orgdb = org.Hs.eg.db,
+                                ont = "BP",
+                                method = "Wang")
+
+# Reduce redundancy
+reduced_terms <- reduceSimMatrix(simMatrix,
+                                 threshold = 0.9,  # Adjust based on your needs
+                                 orgdb = org.Hs.eg.db)
+
+# Create treemap
+treemapPlot(reduced_terms)
+
+```
+
+
+```{r}
+df_1 <- read_csv("./data/SGNex_HepG2_directRNA_replicate5_run2.csv_inference_results.csv.gz",
+                 show_col_types = FALSE)  %>%
+  na.omit()
+df_2 <- read_csv("./data/SGNex_HepG2_directRNA_replicate6_run1.csv_inference_results.csv.gz",
+                 show_col_types = FALSE)  
+
+consol <- df_1 %>%
+  inner_join(df_2, by=c("transcript_id", "transcript_position")) %>% 
+  na.omit() %>% 
+  mutate(likely_neg = ((score.x <= 0.25)|(score.y <= 0.25)),
+         likely_positive = ((score.x >= 0.75)&(score.y >= 0.75)),
+         unknown = !(likely_neg | likely_positive),
+         state = case_when(likely_neg~"Negative",
+                           likely_positive~"Positive",
+                           unknown~"Unknown"))
+
+
+ggplot(data = consol) +
+  geom_point(aes(x=score.x, y=score.y, col = as.factor(state)), alpha=0.1, shape =".") +
+  theme_minimal()
+```
+
+```{r}
+# Initialize an empty list to store results
+transcript_list <- list()
+
+for (current_cell_line in unique(experiments$cell_line)) {
+  
+  print(current_cell_line)
+  exp <- experiments %>% 
+    filter(cell_line == current_cell_line)
+  
+  replicates <- exp$replicate %>% unique()
+  
+  for (rep in replicates) {
+    print(rep)
+    pathlist <- exp %>% 
+      filter(replicate == rep) %>% 
+      mutate(full_path = paste0("./data/", filename)) %>% 
+      pull(full_path)
+    
+    # Get m6a transcript COUNTS for this replicate
+    m6a_counts <- condense_runs(pathlist) %>% 
+      group_by(transcript_id) %>%
+      summarize(count = sum(m6a, na.rm = TRUE), .groups = 'drop')
+    
+    # Create column name: cell_line_replicate_number
+    col_name <- paste0(current_cell_line, "_replicate", rep)
+    
+    # Store as a named list element (now with counts)
+    transcript_list[[col_name]] <- m6a_counts
+  }
+}
+
+# Convert list to dataframe (wide format)
+# First, get all unique transcript IDs from all replicates
+all_transcripts <- unique(unlist(lapply(transcript_list, function(x) x$transcript_id)))
+
+# Create empty dataframe with transcripts as rows
+transcript_df <- data.frame(
+  transcript_id = all_transcripts,
+  stringsAsFactors = FALSE
+)
+
+# Add each replicate as a column with counts - FIXED VERSION
+for (col_name in names(transcript_list)) {
+  # Merge the counts for this replicate
+  temp_df <- transcript_list[[col_name]]
+  
+  # Use base R merge instead of dplyr joins with :=
+  transcript_df <- merge(transcript_df, temp_df, by = "transcript_id", all.x = TRUE)
+  
+  # Rename the column using base R
+  names(transcript_df)[names(transcript_df) == "count"] <- col_name
+}
+
+
+# Replace NA with 0 (transcripts not found in that replicate)
+transcript_df[is.na(transcript_df)] <- 0
+```
+
+
+
+
+
+
+
+
+```{r}
+
+csv_files <- list.files(path = "./data/", pattern = "\\.csv.gz$", full.names = TRUE)
+
+# Process in smaller batches if you have many files
+batch_size <- 10  # Adjust based on your RAM
+batches <- split(csv_files, ceiling(seq_along(csv_files)/batch_size))
+
+transcript_sites_list <- list()
+
+for(batch_num in seq_along(batches)) {
+  cat("Processing batch", batch_num, "of", length(batches), "\n")
+  
+  batch_files <- batches[[batch_num]]
+  batch_pairs <- list()
+  
+  for(file in batch_files) {
+    temp_data <- read_csv(file, 
+                         col_names = FALSE,
+                         col_types = cols_only(X1 = col_character(), X2 = col_character()),
+                         skip = 1,
+                         progress = FALSE)
+    
+    names(temp_data) <- c("transcript_id", "transcript_position")
+    batch_pairs[[file]] <- distinct(temp_data)
+    rm(temp_data)
+  }
+  
+  # Process this batch
+  batch_unique <- bind_rows(batch_pairs) %>% 
+    distinct(transcript_id, transcript_position) %>%
+    count(transcript_id, name = "n_sites")
+  
+  transcript_sites_list[[batch_num]] <- batch_unique
+  rm(batch_pairs, batch_unique)
+  gc()
+}
+
+# Combine batches
+transcript_sites <- bind_rows(transcript_sites_list) %>%
+  group_by(transcript_id) %>%
+  summarise(n_sites = sum(n_sites), .groups = 'drop') %>%
+  mutate(transcript_id = str_split(transcript_id, "\\.", simplify = TRUE)[,1])
+
+# Get unique transcript IDs from transcript_sites
+transcript_ids <- transcript_sites$transcript_id
+
+# Map transcripts to genes
+gene_mapping <- getBM(attributes = c("ensembl_gene_id", "ensembl_transcript_id"),
+                      filters = c("ensembl_transcript_id"),
+                      values = transcript_ids,
+                      mart = mart)
+
+# Merge and get max sites per gene
+gene_sites <- transcript_sites %>%
+  inner_join(gene_mapping, by = c("transcript_id" = "ensembl_transcript_id")) %>%
+  group_by(ensembl_gene_id) %>%
+  summarise(sites = max(n_sites), .groups = 'drop')
+
+```
+
+
+
+
+
+
+```{r}
+# Get unique transcript IDs from your dataframe
+transcript_ids <- transcript_df$transcript_id
+
+
+# Merge the mapping with your count data
+gene_df <- transcript_df %>%
+  left_join(gene_mapping, by = c("transcript_id" = "ensembl_transcript_id")) %>%
+  
+  # Remove transcripts that didn't map to genes
+  filter(!is.na(ensembl_gene_id)) %>%
+  
+  # Group by gene and sum all replicate columns
+  group_by(ensembl_gene_id) %>%
+  summarize(across(-transcript_id, sum, na.rm = TRUE), .groups = 'drop') 
+  
+
+
+```
+
+
+```{r}
+# Create the no-intercept DESeqDataSet
+dds_no_intercept <- DESeqDataSetFromMatrix(
+  countData = counts_matrix,
+  colData = col_data,
+  design = ~ 0 + cell_line
+)
+
+# Calculate gene_sites-based size factors (sample-level normalization)
+# Option A: Use total DRACH sites per sample (weighted by gene_sites)
+common_genes <- intersect(rownames(counts_matrix), gene_sites[[1]])
+
+if(length(common_genes) > 0) {
+  # Match gene_sites with counts matrix
+  site_counts <- gene_sites[[2]][match(common_genes, gene_sites[[1]])]
+  
+  # Calculate weighted total "modification potential" per sample
+  # This represents the total DRACH sites detected in each sample
+  weighted_totals <- colSums(counts_matrix[common_genes, ] * site_counts)
+  size_factors <- weighted_totals / exp(mean(log(weighted_totals)))
+  
+  cat("Using", length(common_genes), "genes with DRACH site information\n")
+  cat("Size factors based on weighted DRACH sites:\n")
+  print(size_factors)
+} else {
+  # Fallback: use total m6A counts per sample
+  sample_totals <- colSums(counts_matrix)
+  size_factors <- sample_totals / exp(mean(log(sample_totals)))
+  cat("No common genes found, using total counts fallback\n")
+}
+
+# Apply the calculated size factors
+sizeFactors(dds_no_intercept) <- size_factors
+
+# Verify the size factors
+cat("Applied size factors:\n")
+print(sizeFactors(dds_no_intercept))
+
+# Now run DESeq
+dds_no_intercept <- DESeq(dds_no_intercept)
+
+# Get one-vs-all results
+results_names <- resultsNames(dds_no_intercept)
+print(results_names)
+
+# Extract results for each cell line vs average of all others
+one_vs_all_results <- list()
+for(coef_name in results_names) {
+  one_vs_all_results[[coef_name]] <- results(dds_no_intercept, name = coef_name)
+}
+```
+
+
+
+
+```{r}
+
+library(ggplot2)
+library(ggrepel)
+library(dplyr)
+
+# Function to create volcano plot
+create_volcano_plot <- function(deseq_results, title = "Volcano Plot", 
+                               p_cutoff = 0.01, lfc_cutoff = 2.5) {
+  
+  # Convert to dataframe
+  results_df <- as.data.frame(deseq_results)
+  results_df$gene <- rownames(results_df)
+  
+  # Remove NA values
+  results_df <- results_df[!is.na(results_df$padj) & !is.na(results_df$log2FoldChange), ]
+  
+  # Create significance categories
+  results_df$significance <- "Not Significant"
+  results_df$significance[results_df$padj < p_cutoff & results_df$log2FoldChange > lfc_cutoff] <- "Up"
+  results_df$significance[results_df$padj < p_cutoff & results_df$log2FoldChange < -lfc_cutoff] <- "Down"
+  
+  # Get top genes for labeling (most significant)
+  top_genes <- results_df %>%
+    filter(padj < p_cutoff & abs(log2FoldChange) > lfc_cutoff) %>%
+    arrange(padj) %>%
+    head(15)
+  
+  # Create the plot
+  p <- ggplot(results_df, aes(x = log2FoldChange, y = -log10(padj), color = significance)) +
+    geom_point(alpha = 0.6, size = 1.5) +
+    geom_hline(yintercept = -log10(p_cutoff), linetype = "dashed", color = "red", alpha = 0.7) +
+    geom_vline(xintercept = c(-lfc_cutoff, lfc_cutoff), linetype = "dashed", color = "red", alpha = 0.7) +
+    scale_color_manual(values = c("Up" = "red", "Down" = "blue", "Not Significant" = "gray")) +
+    labs(title = title,
+         x = "Log2 Fold Change",
+         y = "-Log10 Adjusted P-value",
+         color = "Significance") +
+    theme_minimal() +
+    theme(legend.position = "bottom",
+          plot.title = element_text(hjust = 0.5, size = 12))
+  
+  # Add gene labels if there are significant genes
+  if(nrow(top_genes) > 0) {
+    p <- p + ggrepel::geom_text_repel(
+      data = top_genes,
+      aes(label = gene),
+      size = 3,
+      max.overlaps = 20,
+      box.padding = 0.5,
+      segment.color = "grey50"
+    )
+  }
+  
+  return(p)
+}
+
+# Create and display plots for each result
+for(cell_line in names(one_vs_all_results)) {
+  cat("Creating volcano plot for:", cell_line, "\n")
+  
+  p <- create_volcano_plot(
+    one_vs_all_results[[cell_line]],
+    title = paste(cell_line, "vs Average of All Others")
+  )
+  
+  print(p)  # Display the plot
+}
+```
+
+```{r}
+
+# Function to filter DESeq2 results
+filter_significant_genes <- function(deseq_results, 
+                                    p_cutoff = 0.01, 
+                                    lfc_cutoff = 2.5) {
+  
+  results_df <- as.data.frame(deseq_results)
+  results_df$gene_id <- rownames(results_df)
+  
+  # Filter significant genes
+  significant_genes <- results_df %>%
+    filter(!is.na(padj) & !is.na(log2FoldChange)) %>%
+    filter(padj < p_cutoff & abs(log2FoldChange) > lfc_cutoff) %>%
+    pull(gene_id)
+  
+  return(significant_genes)
+}
+
+# Collect all significant genes from all 7 comparisons
+all_significant_genes <- list()
+
+for(cell_line in names(one_vs_all_results)) {
+  sig_genes <- filter_significant_genes(
+    one_vs_all_results[[cell_line]],
+    p_cutoff = 0.0005,
+    lfc_cutoff = 2.5  # Adjust based on your biological relevance
+  )
+  
+  all_significant_genes[[cell_line]] <- sig_genes
+  cat(cell_line, ":", length(sig_genes), "significant genes\n")
+}
+
+# Get unique significant genes across all comparisons
+unique_sig_genes <- unique(unlist(all_significant_genes))
+cat("Total unique significant genes:", length(unique_sig_genes), "\n")
+```
+
+```{r}
+
+# Perform GO enrichment for each cell line individually
+cell_line_go_results <- list()
+
+for(cell_line in names(all_significant_genes)) {
+  sig_genes <- all_significant_genes[[cell_line]]
+  
+  if(length(sig_genes) > 0) {
+    cat("Performing GO enrichment for", cell_line, "with", length(sig_genes), "genes\n")
+    
+    ego <- enrichGO(
+      gene          = sig_genes,
+      OrgDb         = org.Hs.eg.db,
+      keyType       = "ENSEMBL",
+      ont           = "BP",
+      pAdjustMethod = "BH",
+      pvalueCutoff  = 0.005,
+      qvalueCutoff  = 0.2
+    )
+    
+    cell_line_go_results[[cell_line]] <- ego
+    
+    # Save individual results
+    if(nrow(ego) > 0) {
+      write.csv(as.data.frame(ego), 
+                paste0("GO_enrichment_", cell_line, ".csv"), 
+                row.names = FALSE)
+    }
+  }
+}
+
+
+# Create directory for plots
+if(!dir.exists("GO_treemaps")) dir.create("GO_treemaps")
+
+# Generate treemap for each cell line with significant GO terms
+for(cell_line in names(cell_line_go_results)) {
+  ego <- cell_line_go_results[[cell_line]]
+  
+  if(!is.null(ego) && nrow(ego) > 0) {
+    cat("Creating treemap for", cell_line, "\n")
+    
+    tryCatch({
+      # Calculate similarity matrix
+      simMatrix <- calculateSimMatrix(
+        ego$ID,
+        orgdb = org.Hs.eg.db,
+        ont = "BP",
+        method = "Rel"
+      )
+      
+      # Reduce redundant terms
+      reduced_terms <- reduceSimMatrix(
+        simMatrix,
+        threshold = 0.8,
+        orgdb = org.Hs.eg.db,
+        scores = setNames(-log10(ego$pvalue), ego$ID)
+      )
+      
+      # Create and save treemap
+      p <- treemapPlot(reduced_terms) + 
+        ggtitle(paste("GO Terms -", cell_line))
+      
+      ggsave(
+        filename = paste0("GO_treemaps/", cell_line, "_GO_treemap.png"),
+        plot = p,
+        width = 10,
+        height = 8,
+        dpi = 300
+      )
+      
+      cat("Saved treemap for", cell_line, "\n")
+      
+    }, error = function(e) {
+      cat("Error creating treemap for", cell_line, ":", e$message, "\n")
+    })
+  }
+}
+
+```
+
