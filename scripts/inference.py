@@ -10,8 +10,6 @@ import numpy as np
 import joblib
 
 import tensorflow as tf
-tf.keras.backend.set_floatx('float32')
-
 
 # =========================
 # Default Config for Inference
@@ -19,7 +17,7 @@ tf.keras.backend.set_floatx('float32')
 DEFAULT_CONFIG = {
     "model_file": "../data/results/dataset0_full_model.keras",  # Path to the saved model
     "scaler_file": "../data/results/dataset0_full_scaler.pkl",  # Path to the saved scaler
-    "input_file": "../data/processed/dataset2_processed.parquet",  # Path to input data for inference
+    "input_file": "../data/processed/test_dataset_processed.parquet",  # Path to input data for inference
     "output_path": "../data/inference",  # Path to save the results
     "rng": 42,
     "full_keep" : False # If true it will also save a full dataset + a new column of score, else it will only be a csv that contains the 3 columns necessary for submission
@@ -38,17 +36,15 @@ def make_inference(model, scaler, input_df, output_path, base='', full_keep_df=D
     # Preprocess the input data (same steps as training)
     X_input = input_df.drop(columns=["gene_id", "transcript_id", "transcript_position", "label", "set_type", "fold"], errors="ignore")
     X_input_scaled = scaler.transform(X_input)
+    nan_mask = X_input.isna().any(axis=1)  # rows with any NaN, im looking at you sgnex data why so many groups with single row, or cant be aggregated properly
 
     # Make predictions
     y_pred_prob = model.predict(X_input_scaled)
 
-    # To handle numeric precision instability on different machine and also to reduce to reduce the trailing of our prediction
-    y_pred_prob = np.nan_to_num(y_pred_prob, nan=0)
-    y_pred_prob = np.array([f"{x:.6f}" for x in y_pred_prob.flatten()])
-
     # Prepare the 3 columns required for submission
     output_df = input_df[["transcript_id", "transcript_position"]].copy()
     output_df["score"] = y_pred_prob  # Inference probability as the score
+    output_df.loc[nan_mask, "score"] = np.nan   # manually set NaN for those rows, for different machine where defulat NA return a value instead
     output_file = output_path / f"{base}_inference_results.csv"
     output_df.to_csv(output_file, index=False)
     print(f"Inference results saved to {output_file}")
@@ -57,6 +53,7 @@ def make_inference(model, scaler, input_df, output_path, base='', full_keep_df=D
     if full_keep_df:
         full_output_df = input_df.copy()
         full_output_df["score"] = y_pred_prob
+        full_output_df.loc[nan_mask, "score"] = np.nan   # manually set NaN for those rows, for different machine where defulat NA return a value instead
         full_output_file = output_path / f"{base}_full_inference_results.csv"
         full_output_df.to_csv(full_output_file, index=False)
         print(f"\nInference results (FULL) saved to {full_output_file}")

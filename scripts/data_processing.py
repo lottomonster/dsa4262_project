@@ -12,7 +12,7 @@ import polars as pl
 # Default Config for Data Processing
 # =========================
 DEFAULT_CONFIG = {
-    "input_file": "../data/csv/dataset2.csv",
+    "input_file": "../data/csv/test_dataset.csv",
     "output_path": "../data/processed/",
     "rng": 42,
     "mode": "inference",  # "train" or "inference"
