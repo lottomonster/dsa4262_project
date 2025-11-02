@@ -1,0 +1,8 @@
+numpy
+pandas
+polars
+matplotlib
+joblib
+scikit-learn
+tensorflow
+fastparquet
