@@ -12,11 +12,12 @@
 > (Optional) If you prefer starting from JSON, we have also provided a helper bash script that converts `data/json/test_dataset.json.gz` into `data/csv/test_dataset.csv`.
 
 ---
-### 1. Install system dependencies (Ubuntu)
-If you run into any daemon/kernel of the aws Ubuntu instance being outdated, just hit Enter.
+### 1. Install and setting up system dependencies (Ubuntu)
+If you run into any daemon using outdated libraries for the aws Ubuntu instance and asking which services should be restarted, just hit Enter.
 ```bash
 sudo apt update -y
 sudo apt install -y python3 python3-pip git
+sudo ln -s /usr/bin/python3 /usr/bin/python
 ```
 
 ---
@@ -47,7 +48,7 @@ bash ./scripts/json_to_csv.sh ./data/json/test_dataset.json.gz ./data/csv/test_d
 ### 5. Process the test CSV dataset (provided in repo)
 
 ```bash
-python3 scripts/data_processing.py --mode inference --input_file ../data/csv/test_dataset.csv
+python scripts/data_processing.py --mode inference --input_file ../data/csv/test_dataset.csv
 ```
 
 Expected output file:   /home/ubuntu/dsa4262_project/data/processed/test_dataset_inference_results.csv
@@ -56,7 +57,7 @@ Expected output file:   /home/ubuntu/dsa4262_project/data/processed/test_dataset
 ---
 ### 6. Run inference using the trained model
 ```bash
-python3 scripts/inference.py --input_file ../data/processed/test_dataset_processed.parquet
+python scripts/inference.py --input_file ../data/processed/test_dataset_processed.parquet
 ```
 
 Expected output file:   /home/ubuntu/dsa4262_project/data/inference/test_dataset_inference_results.csv
