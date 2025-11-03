@@ -5,20 +5,18 @@
 
 ## Quick Start (Evaluate Repo using Test data)
 
-> Follow these commands **in sequence**.
-> Each line is designed to be copy-pasted individually.
+> Run the commands one at a time, in the order shown.
 
-> This project already includes a sample dataset in the repo which is located in `data/csv/test_dataset.csv`.
+> A prepared test CSV dataset is already included at: `data/csv/test_dataset.csv`
+
+> (Optional) If you prefer starting from JSON, we have also provided a helper bash script that converts `data/json/test_dataset.json.gz` into `data/csv/test_dataset.csv`.
 
 ---
 ### 1. Install system dependencies (Ubuntu)
-
+If you run into any daemon/kernel of the aws Ubuntu instance being outdated, just hit Enter.
 ```bash
-sudo apt update
-```
-
-```bash
-sudo apt install python3 python3-pip git
+sudo apt update -y
+sudo apt install -y python3 python3-pip git
 ```
 
 ---
@@ -26,9 +24,6 @@ sudo apt install python3 python3-pip git
 
 ```bash
 git clone https://github.com/lottomonster/dsa4262_project.git
-```
-
-```bash
 cd dsa4262_project
 ```
 
@@ -37,37 +32,34 @@ cd dsa4262_project
 
 ```bash
 pip install --upgrade pip
-```
-
-```bash
 pip install -r requirements.txt
 ```
 
 ---
-### 4. Process the test dataset (provided in repo)
+### 4. (Optional) Convert the test dataset from json to csv 
+This will overwrite `data/csv/test_dataset.csv`.
+```bash
+bash ./scripts/json_to_csv.sh ./data/json/test_dataset.json.gz ./data/csv/test_dataset.csv
+```
+
+
+---
+### 5. Process the test CSV dataset (provided in repo)
 
 ```bash
 python3 scripts/data_processing.py --mode inference --input_file ../data/csv/test_dataset.csv
 ```
 
-Expected output file:
+Expected output file:   /home/ubuntu/dsa4262_project/data/processed/test_dataset_inference_results.csv
 
-```
-/home/ubuntu/dsa4262_project/data/inference/test_dataset_inference_results.csv
-```
 
 ---
-### 5. Run inference using the trained model
-
+### 6. Run inference using the trained model
 ```bash
 python3 scripts/inference.py --input_file ../data/processed/test_dataset_processed.parquet
 ```
 
-Expected output file:
-
-```
-/home/ubuntu/dsa4262_project/data/inference/test_dataset_inference_results.csv
-```
+Expected output file:   /home/ubuntu/dsa4262_project/data/inference/test_dataset_inference_results.csv
 
 <br>
 <br>
@@ -77,22 +69,25 @@ Expected output file:
 ```plaintext
 dsa4262_project/
   ├── data/
-  │   ├── csv/              # Store raw CSV files for data processing
-  │   │   └── test_dataset.csv  # Prepared
-  │   ├── processed/        # Store processed datasets (Parquet format) for training or inference
+  │   ├── json/                     # Store raw JSON files for converting to CSV
+  │   │   └── test_dataset.json.gz  # Prepared
+  │   ├── csv/                      # Store raw CSV files for data processing
+  │   │   └── test_dataset.csv      # Prepared
+  │   ├── processed/                      # Store processed datasets (Parquet format) for training or inference
   │   │   ├── dataset0_processed.parquet  # Processed data for model training/inference
   │   │   ├── dataset1_processed.parquet  # Processed data for inference
   │   │   ├── dataset2_processed.parquet  # Processed data for inference
   │   │   └── dataset3_processed.parquet  # Processed data for inference
-  │   ├── results/          # Results from the training process (models, metrics, logs)
-  │   │   ├── dataset0_full_scaler.pkl  # Scaler generated from training.py
-  │   │   └── dataset0_full_model.keras  # Model weights generated from running training.py
-  │   ├── inference/        # Output folder for inference.py (submission 3 column format)
+  │   ├── results/                        # Results from the training process (models, metrics, logs)
+  │   │   ├── dataset0_full_scaler.pkl    # Scaler generated from training.py
+  │   │   └── dataset0_full_model.keras   # Model weights generated from running training.py
+  │   ├── inference/                  # Output folder for inference.py (submission 3 column format)
   │   │   ├── dataset0_inference.csv  # Model Prediction of dataset0
   │   │   ├── dataset1_inference.csv  # Model Prediction of dataset1
   │   │   ├── dataset2_inference.csv  # Model Prediction of dataset2
   │   │   └── dataset3_inference.csv  # Model Prediction of dataset3
   ├── scripts/
+  │   ├── json_to_csv.sh     # Bash script to convert json to csv format
   │   ├── data_processing.py # Data preprocessing script
   │   ├── training.py        # Model training script
   │   └── inference.py       # Model inference script
@@ -107,9 +102,9 @@ Run all cmds from dsa4262_project location thanks.
 
 ## Path Handling (Important)
 
-For all scripts (`data_processing.py`, `training.py`, `inference.py`):
+For all .py scripts (`data_processing.py`, `training.py`, `inference.py`):
 
-* Any **file or folder path** provided with flags (`--input_file`, `--output_path`, `--model_file`, `--scaler_file`) is **relative to where the script is stored**, not your current working directory (CWD).
+* Any **file or folder path** provided with flags (`--input_file`, `--output_path`, `--model_file`, `--scaler_file`) is **relative to where the python script is stored**, not your current working directory (CWD).
 * This ensures the script behaves the same no matter where you run it from.
 
 ---
@@ -535,8 +530,7 @@ Where `score` is the predicted probability for each row.
 
 ## Final Notes:
 
-1. **File Paths**: Always ensure that the `input_file` and `output_path` are provided relative to the `scripts` folder. For example, when running the script from the root directory, you'll need to reference files from the `../data/csv/` and `../data/processed/` paths.
+1. **File Paths**: Always ensure that the `input_file` and `output_path` of .py scripts are provided relative to the  `scripts` folder. For example, when running the script from the root directory, you'll need to reference files from the `../data/csv/` and `../data/processed/` paths.
 
-2. **File Size**: Large files (e.g., `dataset0_processed.parquet`) may not be included in the GitHub repository. Therefore, good luck have fun figure out yourself.
-
+2. Most importantly, if you made it this far, you’re awesome. Thanks for powering through this over-exerted effort of documentation for just 5%. Enjoy life, keep doing your thing, and remember to take it easy.
 ---
