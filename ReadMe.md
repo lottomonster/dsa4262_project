@@ -3,17 +3,18 @@
 
 # README
 
-## Quick Start (Evaluate Repo using Test data)
+## Quick Start (Evaluate Repo using our provided Test data)
 
-> Run the commands one at a time, in the order shown.
+Run the following commands in the terminal of a new Ubuntu instance, one at a time, in the order shown.
 
-> A prepared test CSV dataset is already included at: `data/csv/test_dataset.csv`
+A prepared test CSV dataset is already included at: `data/csv/test_dataset.csv`
 
-> (Optional) If you prefer starting from JSON, we have also provided a helper bash script that converts `data/json/test_dataset.json.gz` into `data/csv/test_dataset.csv`.
+(Optional) If you prefer starting from JSON, we have also provided a helper bash script that converts `data/json/test_dataset.json.gz` into `data/csv/test_dataset.csv` in step 4.
+
 
 ---
 ### 1. Install and setting up system dependencies (Ubuntu)
-If you run into any daemon using outdated libraries for the aws Ubuntu instance and asking which services should be restarted, just hit Enter.
+> If you run into any daemon using outdated libraries for the aws Ubuntu instance and asking which services should be restarted, just hit Enter.
 ```bash
 sudo apt update -y
 sudo apt install -y python3 python3-pip git
@@ -38,7 +39,7 @@ pip install -r requirements.txt
 
 ---
 ### 4. (Optional) Convert the test dataset from json to csv 
-This will overwrite `data/csv/test_dataset.csv`.
+> This will overwrite `data/csv/test_dataset.csv`.
 ```bash
 bash ./scripts/json_to_csv.sh ./data/json/test_dataset.json.gz ./data/csv/test_dataset.csv
 ```
@@ -51,7 +52,7 @@ bash ./scripts/json_to_csv.sh ./data/json/test_dataset.json.gz ./data/csv/test_d
 python scripts/data_processing.py --mode inference --input_file ../data/csv/test_dataset.csv
 ```
 
-Expected output file:   /home/ubuntu/dsa4262_project/data/processed/test_dataset_inference_results.csv
+Expected output file:   /home/ubuntu/dsa4262_project/data/processed/test_dataset_processed.parquet
 
 
 ---
@@ -71,9 +72,9 @@ Expected output file:   /home/ubuntu/dsa4262_project/data/inference/test_dataset
 dsa4262_project/
   ├── data/
   │   ├── json/                     # Store raw JSON files for converting to CSV
-  │   │   └── test_dataset.json.gz  # Prepared
+  │   │   └── test_dataset.json.gz  # Provided
   │   ├── csv/                      # Store raw CSV files for data processing
-  │   │   └── test_dataset.csv      # Prepared
+  │   │   └── test_dataset.csv      # Provided
   │   ├── processed/                      # Store processed datasets (Parquet format) for training or inference
   │   │   ├── dataset0_processed.parquet  # Processed data for model training/inference
   │   │   ├── dataset1_processed.parquet  # Processed data for inference
